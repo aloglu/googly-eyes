@@ -1,6 +1,6 @@
 # Googly Eyes for Waybar
 
-A whimsical Waybar module that puts two googly eyes in your bar follow the mouse cursor. Mouse clicks make the matching eye blink, and the config file allows you to change basic settings for both eyes together or separately.
+A whimsical Waybar module that puts two googly eyes in your Waybar that follows the mouse cursor. Mouse clicks make the matching eye blink, and the config file allows you to change basic settings for both eyes together or separately.
 
 ## Features
 
