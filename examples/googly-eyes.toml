@@ -1,0 +1,43 @@
+# Googly Eyes Waybar module configuration.
+# Edit this file and the running daemon will hot-reload it automatically.
+
+[eyes]
+# Hex colors in #RGB or #RRGGBB form.
+sclera_color = "#fffdf2"
+pupil_color = "#111111"
+outline_color = "#1d2021"
+
+# Scales eye width/height while preserving the current eye shape.
+size = 1.0
+
+# Distance in SVG pixels between the centers of the two eyes.
+# With the default eye size, the largest useful value is 38.0.
+# Larger values are clamped so Waybar does not shrink the eyes.
+distance = 38.0
+
+# Radius of the pupil in SVG pixels.
+pupil_size = 7.3
+
+# Font size for the blink character in SVG pixels.
+blink_size = 22.0
+
+[blink]
+enabled = true
+# Keeps quick clicks visible after release.
+duration_ms = 140
+# Used as the blink mark. "—" looks like the current dash blink.
+character = "—"
+
+[left]
+enabled = true
+# Optional per-eye overrides:
+# sclera_color = "#fffdf2"
+# pupil_color = "#111111"
+# outline_color = "#1d2021"
+# size = 1.0
+# pupil_size = 7.3
+# blink_size = 22.0
+
+[right]
+enabled = true
+# Optional per-eye overrides are the same as [left].
