@@ -5,6 +5,7 @@ A whimsical Waybar module that puts two googly eyes in your Waybar that follows 
 ## Features
 
 - Cursor-following pupils
+- Full-circle eye tracking for Waybar at the top or bottom of the screen
 - Global left/right click blink effects via Hyprland binds
 - Configurable colors, sizes, blink character, and enabled eyes
 - Hot-reloaded TOML config
@@ -52,6 +53,8 @@ bindrn = , mouse:273, exec, /home/YOU/.config/waybar/scripts/waybar-googly-eyes.
 ```
 
 Reload Hyprland and restart Waybar.
+
+The script detects Waybar position from `~/.config/waybar/config.jsonc`. If you manage Waybar position through a separate state file, it also supports `~/.config/waybar/display-state.json` with a `position` value of `top` or `bottom`. You can force the position with `WAYBAR_GOOGLE_EYES_POSITION=top` or `WAYBAR_GOOGLE_EYES_POSITION=bottom`.
 
 ## Settings
 

@@ -19,6 +19,9 @@ from typing import Any
 
 HYPRCTL_TIMEOUT_SECONDS = 0.18
 WAYBAR_CONFIG_PATH = Path(os.getenv("WAYBAR_GOOGLE_EYES_WAYBAR_CONFIG", "~/.config/waybar/config.jsonc")).expanduser()
+WAYBAR_DISPLAY_STATE_PATH = Path(
+    os.getenv("WAYBAR_DISPLAY_STATE", "~/.config/waybar/display-state.json")
+).expanduser()
 USER_CONFIG_PATH = Path(os.getenv("WAYBAR_GOOGLE_EYES_CONFIG", "~/.config/waybar/googly-eyes.toml")).expanduser()
 OUTPUT_PATH = Path(os.getenv("WAYBAR_GOOGLE_EYES_PATH", "~/.cache/waybar/googly-eyes.svg")).expanduser()
 PID_PATH = Path(os.getenv("WAYBAR_GOOGLE_EYES_PID", "~/.cache/waybar/googly-eyes.pid")).expanduser()
@@ -28,6 +31,8 @@ MONITOR_CACHE_PATH = Path(
 ).expanduser()
 MONITOR_CACHE_SECONDS = float(os.getenv("WAYBAR_GOOGLE_EYES_MONITOR_CACHE_SECONDS", "3"))
 DAEMON_INTERVAL_SECONDS = float(os.getenv("WAYBAR_GOOGLE_EYES_INTERVAL", "0.016"))
+MAX_HELD_BLINK_SECONDS = float(os.getenv("WAYBAR_GOOGLE_EYES_MAX_HELD_SECONDS", "1.5"))
+WORKSPACE_POLL_SECONDS = float(os.getenv("WAYBAR_GOOGLE_EYES_WORKSPACE_POLL_SECONDS", "0.05"))
 
 BASE_SVG_WIDTH = 92.0
 BASE_SVG_HEIGHT = 40.0
@@ -310,6 +315,21 @@ def cursor_position() -> tuple[int, int] | None:
     return (int(match.group(1)), int(match.group(2)))
 
 
+def active_workspace_signature() -> str | None:
+    output = hyprctl("activeworkspace", "-j")
+    if not output:
+        return None
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    workspace_id = data.get("id")
+    workspace_name = data.get("name")
+    return f"{workspace_id}:{workspace_name}"
+
+
 def monitors() -> list[Monitor]:
     try:
         if MONITOR_CACHE_PATH.exists() and time_since_mtime(MONITOR_CACHE_PATH) <= MONITOR_CACHE_SECONDS:
@@ -401,6 +421,13 @@ def waybar_position() -> str:
     if override in {"top", "bottom"}:
         return override
     try:
+        state = json.loads(WAYBAR_DISPLAY_STATE_PATH.read_text(encoding="utf-8"))
+        state_position = state.get("position") if isinstance(state, dict) else None
+        if state_position in {"top", "bottom"}:
+            return state_position
+    except (OSError, json.JSONDecodeError):
+        pass
+    try:
         raw: Any = json.loads(strip_jsonc(WAYBAR_CONFIG_PATH.read_text(encoding="utf-8")))
         config = raw[0] if isinstance(raw, list) and raw else raw
         position = config.get("position", "bottom") if isinstance(config, dict) else "bottom"
@@ -422,26 +449,42 @@ def monitor_for_cursor(cursor: tuple[int, int], known: list[Monitor]) -> Monitor
     return Monitor(0, 0, 1920, 1080)
 
 
-def pupil_offset(cursor: tuple[int, int] | None, known_monitors: list[Monitor], position: str, layout: EyeLayout) -> tuple[float, float]:
+def pupil_offsets_by_eye(
+    cursor: tuple[int, int] | None,
+    known_monitors: list[Monitor],
+    position: str,
+    layout: EyeLayout,
+) -> dict[str, tuple[float, float]]:
+    """Track from each eye's real screen-space center instead of one shared bar anchor."""
     if cursor is None or layout.max_pupil_travel <= 0:
-        return (0.0, 0.0)
+        return {}
 
     px, py = cursor
     anchor_x, anchor_y = monitor_for_cursor(cursor, known_monitors).anchor(position)
-    dx = px - anchor_x
-    dy = py - anchor_y
-    distance = math.hypot(dx, dy)
-    if distance < 1.0:
-        return (0.0, 0.0)
+    layout_center_x = layout.width / 2
+    layout_center_y = layout.height / 2
+    offsets: dict[str, tuple[float, float]] = {}
 
-    strength = min(1.0, distance / 260.0)
-    return (dx / distance * layout.max_pupil_travel * strength, dy / distance * layout.max_pupil_travel * strength)
+    for eye in layout.eyes:
+        eye_x = anchor_x + (eye.cx - layout_center_x)
+        eye_y = anchor_y + (eye.cy - layout_center_y)
+        dx = px - eye_x
+        dy = py - eye_y
+        distance = math.hypot(dx, dy)
+        if distance < 1.0:
+            offsets[eye.name] = (0.0, 0.0)
+            continue
+        strength = min(1.0, distance / 260.0)
+        travel = eye.style.pupil_travel * strength
+        offsets[eye.name] = (dx / distance * travel, dy / distance * travel)
+
+    return offsets
 
 
 def default_blink_state() -> dict[str, Any]:
     return {
-        "left": {"held": False, "until": 0.0},
-        "right": {"held": False, "until": 0.0},
+        "left": {"held": False, "until": 0.0, "held_until": 0.0},
+        "right": {"held": False, "until": 0.0, "held_until": 0.0},
     }
 
 
@@ -461,12 +504,30 @@ def read_blink_state() -> dict[str, Any]:
             state[eye]["until"] = float(item.get("until", 0))
         except (TypeError, ValueError):
             state[eye]["until"] = 0.0
+        try:
+            state[eye]["held_until"] = float(item.get("held_until", 0))
+        except (TypeError, ValueError):
+            state[eye]["held_until"] = 0.0
     return state
 
 
 def write_blink_state(state: dict[str, Any]) -> None:
     BLINK_PATH.parent.mkdir(parents=True, exist_ok=True)
     BLINK_PATH.write_text(json.dumps(state), encoding="utf-8")
+
+
+def clear_held_blinks() -> bool:
+    state = read_blink_state()
+    changed = False
+    for eye in ("left", "right"):
+        if state[eye]["held"] or state[eye]["held_until"] > 0:
+            state[eye]["held"] = False
+            state[eye]["held_until"] = 0.0
+            state[eye]["until"] = 0.0
+            changed = True
+    if changed:
+        write_blink_state(state)
+    return changed
 
 
 def active_blinks(config: GooglyConfig) -> set[str]:
@@ -476,7 +537,8 @@ def active_blinks(config: GooglyConfig) -> set[str]:
     state = read_blink_state()
     active: set[str] = set()
     for eye in ("left", "right"):
-        if state[eye]["held"] or now <= state[eye]["until"]:
+        held_active = state[eye]["held"] and now <= state[eye]["held_until"]
+        if held_active or now <= state[eye]["until"]:
             active.add(eye)
     return active
 
@@ -505,7 +567,9 @@ def set_button_state(eye: str, action: str) -> int:
 
     state = read_blink_state()
     state[eye]["held"] = action == "down"
-    state[eye]["until"] = time.monotonic() + config.blink.duration_seconds
+    now = time.monotonic()
+    state[eye]["until"] = now + config.blink.duration_seconds
+    state[eye]["held_until"] = now + MAX_HELD_BLINK_SECONDS if action == "down" else 0.0
     write_blink_state(state)
     return 0
 
@@ -520,7 +584,7 @@ def pupil_markup(cx: float, cy: float, blink: bool, eye: EyeStyle, blink_charact
   <circle cx="{cx - 1.0:.2f}" cy="{cy - 1.0:.2f}" r="0.8" fill="#ffffff" opacity="0.9"/>'''
 
 
-def svg(offset_x: float, offset_y: float, config: GooglyConfig, layout: EyeLayout, blinks: set[str] | None = None) -> str:
+def svg(offsets: dict[str, tuple[float, float]], config: GooglyConfig, layout: EyeLayout, blinks: set[str] | None = None) -> str:
     blinks = blinks or set()
     body: list[str] = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{layout.width}" height="{layout.height}" viewBox="0 0 {layout.width} {layout.height}">'
@@ -531,9 +595,9 @@ def svg(offset_x: float, offset_y: float, config: GooglyConfig, layout: EyeLayou
             f'  <ellipse cx="{eye.cx:.2f}" cy="{eye.cy:.2f}" rx="{style.radius_x:.2f}" ry="{style.radius_y:.2f}" fill="{style.sclera_color}" stroke="{style.outline_color}" stroke-width="1.7"/>'
         )
     for eye in layout.eyes:
-        travel_scale = 0.0 if layout.max_pupil_travel <= 0 else eye.style.pupil_travel / layout.max_pupil_travel
-        px = eye.cx + offset_x * travel_scale
-        py = eye.cy + offset_y * travel_scale
+        offset_x, offset_y = offsets.get(eye.name, (0.0, 0.0))
+        px = eye.cx + offset_x
+        py = eye.cy + offset_y
         body.append(f'  {pupil_markup(px, py, eye.name in blinks, eye.style, config.blink.character)}')
     body.append("</svg>")
     return "\n".join(body) + "\n"
@@ -552,8 +616,8 @@ def render_frame(known_monitors: list[Monitor] | None = None, position: str | No
     layout = eye_layout(config)
     position = position or waybar_position()
     cursor = cursor_position()
-    offset_x, offset_y = pupil_offset(cursor, known_monitors if known_monitors is not None else monitors(), position, layout)
-    return svg(offset_x, offset_y, config, layout, active_blinks(config))
+    offsets = pupil_offsets_by_eye(cursor, known_monitors if known_monitors is not None else monitors(), position, layout)
+    return svg(offsets, config, layout, active_blinks(config))
 
 
 def generate_once(known_monitors: list[Monitor] | None = None, position: str | None = None) -> str:
@@ -572,13 +636,22 @@ def process_running(pid: int) -> bool:
     return True
 
 
+def process_matches_daemon(pid: int) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return False
+    command = raw.replace(b"\0", b" ").decode("utf-8", errors="replace")
+    return "waybar-googly-eyes.py" in command and "--daemon" in command
+
+
 def claim_pid() -> bool:
     PID_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
         existing = int(PID_PATH.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         existing = 0
-    if existing and process_running(existing):
+    if existing and process_running(existing) and process_matches_daemon(existing):
         return False
     PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
     return True
@@ -592,6 +665,8 @@ def daemon() -> int:
     position = waybar_position()
     next_monitor_refresh = time.monotonic() + MONITOR_CACHE_SECONDS
     next_position_refresh = time.monotonic() + MONITOR_CACHE_SECONDS
+    last_workspace_signature = active_workspace_signature()
+    next_workspace_check = time.monotonic() + WORKSPACE_POLL_SECONDS
     last_contents = ""
 
     try:
@@ -603,6 +678,18 @@ def daemon() -> int:
             if now >= next_position_refresh:
                 position = waybar_position()
                 next_position_refresh = now + MONITOR_CACHE_SECONDS
+            if now >= next_workspace_check:
+                workspace_signature = active_workspace_signature()
+                if (
+                    workspace_signature is not None
+                    and last_workspace_signature is not None
+                    and workspace_signature != last_workspace_signature
+                    and clear_held_blinks()
+                ):
+                    last_contents = ""
+                if workspace_signature is not None:
+                    last_workspace_signature = workspace_signature
+                next_workspace_check = now + WORKSPACE_POLL_SECONDS
 
             contents = render_frame(known_monitors, position)
             if contents != last_contents:
