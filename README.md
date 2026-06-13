@@ -19,6 +19,8 @@ Copy the script and example config:
 mkdir -p ~/.config/waybar/scripts
 cp scripts/waybar-googly-eyes.py ~/.config/waybar/scripts/
 chmod +x ~/.config/waybar/scripts/waybar-googly-eyes.py
+cp scripts/waybar-googly-eyes-launcher.sh ~/.config/waybar/scripts/
+chmod +x ~/.config/waybar/scripts/waybar-googly-eyes-launcher.sh
 cp examples/googly-eyes.toml ~/.config/waybar/googly-eyes.toml
 ```
 
@@ -37,10 +39,10 @@ Add the image module to your Waybar config:
 }
 ```
 
-Start the daemon from Hyprland autostart:
+Start the launcher from Hyprland autostart:
 
 ```ini
-exec-once = uwsm-app -- /home/YOU/.config/waybar/scripts/waybar-googly-eyes.py --daemon
+exec-once = uwsm-app -- /home/YOU/.config/waybar/scripts/waybar-googly-eyes-launcher.sh
 ```
 
 Optional global blink binds for Hyprland:
@@ -53,6 +55,8 @@ bindrn = , mouse:273, exec, /home/YOU/.config/waybar/scripts/waybar-googly-eyes.
 ```
 
 Reload Hyprland and restart Waybar.
+
+The launcher keeps polling for the Waybar config module and restarts the daemon if it exits, which avoids a boot-time race where the script could miss startup and never come back.
 
 The script detects Waybar position from `~/.config/waybar/config.jsonc`. If you manage Waybar position through a separate state file, it also supports `~/.config/waybar/display-state.json` with a `position` value of `top` or `bottom`. You can force the position with `WAYBAR_GOOGLE_EYES_POSITION=top` or `WAYBAR_GOOGLE_EYES_POSITION=bottom`.
 
